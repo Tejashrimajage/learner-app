@@ -14,6 +14,7 @@ import {
   setDataInStorage,
 } from '../../utils/JsHelper/Helper';
 import globalStyles from '../../utils/Helper/Style';
+import { isBatchEnded } from '../../utils/Helper/batchEndDate';
 import ActiveLoading from '../LoadingScreen/ActiveLoading';
 
 import NetworkAlert from '../../components/NetworkError/NetworkAlert';
@@ -28,6 +29,7 @@ const Assessment = ({ header, background }) => {
   const [assessments, setAssessments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [networkstatus, setNetworkstatus] = useState(true);
+  const [batchEnded, setBatchEnded] = useState(false);
 
   /*useEffect(() => {
     fetchData();
@@ -49,6 +51,16 @@ const Assessment = ({ header, background }) => {
     const cohort = JSON.parse(cohortparse);
     const cohort_id = await getDataFromStorage('cohortId');
     //console.log('########### cohort', cohort);
+
+    // Once the batch is over the learner keeps the screen but gets no tests.
+    if (isBatchEnded(cohort)) {
+      setBatchEnded(true);
+      setAssessments([]);
+      setLoading(false);
+      return;
+    }
+    setBatchEnded(false);
+
     let board = null;
     // let state = null;
     console.log('cohort==>', JSON.stringify(cohort));
@@ -221,7 +233,9 @@ const Assessment = ({ header, background }) => {
               })
             ) : (
               <GlobalText style={globalStyles.subHeading}>
-                {t('no_data_found')}
+                {batchEnded
+                  ? t('no_assessments_batch_completed')
+                  : t('no_data_found')}
               </GlobalText>
             )}
           </View>

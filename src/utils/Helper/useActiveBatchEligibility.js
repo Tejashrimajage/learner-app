@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { AppState } from 'react-native';
-import { useIsFocused, useNavigation } from '@react-navigation/native';
+import { useCallback, useEffect, useState } from 'react';
+import { useIsFocused } from '@react-navigation/native';
 import { getDataFromStorage, setDataInStorage } from '../JsHelper/Helper';
 import { getCohort } from '../API/AuthService';
 
@@ -38,18 +37,19 @@ const readStoredEligibility = async (tenantid) => {
 
 /**
  * Returns true when the logged-in learner has an active batch.
- * Mirrors SCPUserTabScreen.refreshCohortData (including its 3-second re-check
- * while focused): re-fetches the cohort and falls back to the stored
- * `cohortData` when the API call fails or required keys are missing. Unlike SCP
- * it only writes `cohortData` / `cohortId` when it finds a matching batch, so
- * it never wipes what login stored.
+ * Based on SCPUserTabScreen.refreshCohortData: re-fetches the cohort and falls
+ * back to the stored `cohortData` when the API call fails or required keys are
+ * missing. Unlike SCP it only writes `cohortData` / `cohortId` when it finds a
+ * matching batch, so it never wipes what login stored.
+ *
+ * Unlike SCP it does NOT poll. The cohort is fetched only when the hosting
+ * screen mounts (page reload, program switch) and each time it regains focus
+ * (coming back from another route).
  *
  * Pass `enabled = false` to make the hook inert (no API calls, no listeners).
  */
 const useActiveBatchEligibility = (enabled = true) => {
-  const navigation = useNavigation();
   const isFocused = useIsFocused();
-  const appState = useRef(AppState.currentState);
   const [eligible, setEligible] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -98,52 +98,13 @@ const useActiveBatchEligibility = (enabled = true) => {
     }
   }, [enabled]);
 
-  // Mount, enable change and screen focus.
+  // Mount (reload / program switch), enable change and every time the screen
+  // regains focus (coming back from another route).
   useEffect(() => {
     if (isFocused) {
       refresh();
     }
   }, [isFocused, refresh]);
-
-  // Navigation state change (e.g. coming back from another screen).
-  useEffect(() => {
-    if (!enabled) {
-      return undefined;
-    }
-    return navigation.addListener('state', refresh);
-  }, [enabled, navigation, refresh]);
-
-  // Same as SCPUserTabScreen: re-check every 3 seconds while the screen is
-  // focused and the app is in the foreground, so the tab appears / disappears
-  // as soon as the batch is assigned / removed.
-  useEffect(() => {
-    if (!enabled || !isFocused) {
-      return undefined;
-    }
-    const intervalId = setInterval(() => {
-      if (AppState.currentState === 'active') {
-        refresh();
-      }
-    }, 3000);
-    return () => clearInterval(intervalId);
-  }, [enabled, isFocused, refresh]);
-
-  // App returning to the foreground.
-  useEffect(() => {
-    if (!enabled) {
-      return undefined;
-    }
-    const subscription = AppState.addEventListener('change', (nextAppState) => {
-      if (
-        appState.current.match(/inactive|background/) &&
-        nextAppState === 'active'
-      ) {
-        refresh();
-      }
-      appState.current = nextAppState;
-    });
-    return () => subscription?.remove();
-  }, [enabled, refresh]);
 
   return eligible;
 };
