@@ -223,10 +223,18 @@ const FilterList = ({
   };
 
   const renderFilterSection = (item, key, isStatic = false) => {
+    // Static fields can arrive without a `range`, dynamic ones without
+    // `options`; there is nothing to show for those, so skip them.
+    // (An empty list still renders, as dependent categories rely on that.)
+    const sectionOptions = isStatic ? item?.range : item?.options;
+    if (!Array.isArray(sectionOptions)) {
+      return null;
+    }
+
     const isExpanded = expandedSections[item.code];
     const selectedCount = isStatic 
-      ? (staticFormData[item.code]?.length || 0)
-      : (formData[item.code]?.length || 0);
+      ? (staticFormData?.[item.code]?.length || 0)
+      : (formData?.[item.code]?.length || 0);
 
     return (
       <View key={key} style={styles.filterSection}>
@@ -260,7 +268,7 @@ const FilterList = ({
               <CustomCheckbox2
                 setStaticFormData={setStaticFormData}
                 staticFormData={staticFormData}
-                options={item.range}
+                options={sectionOptions}
                 category={item.code}
                 showMoreLimit={3}
               />
@@ -268,7 +276,7 @@ const FilterList = ({
               <CustomCheckbox
                 setFormData={setFormData}
                 formData={formData}
-                options={item.options}
+                options={sectionOptions}
                 category={item.code}
                 index={item.index}
                 replaceOptionsWithAssoc={replaceOptionsWithAssoc}

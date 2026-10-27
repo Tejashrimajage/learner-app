@@ -27,8 +27,14 @@ const CustomCheckbox2 = ({
   const [selectedItems, setSelectedItems] = useState([]);
   const [showAllOptions, setShowAllOptions] = useState(false);
 
+  // staticFormData can briefly be an array (or undefined) while the filter
+  // form is still loading, so read the category defensively.
+  const selectedForCategory = Array.isArray(staticFormData?.[category])
+    ? staticFormData[category]
+    : [];
+
   useEffect(() => {
-    setSelectedItems(staticFormData[category] || []);
+    setSelectedItems(selectedForCategory);
   }, [staticFormData, category]); // ✅ Added category to dependencies
 
   const toggleSelection = (item) => {
@@ -76,8 +82,13 @@ const CustomCheckbox2 = ({
     );
   };
 
-  const displayOptions = showAllOptions ? options : options.slice(0, showMoreLimit);
-  const hasMoreOptions = options.length > showMoreLimit;
+  // Some static form fields come back without a `range`, so options can be
+  // undefined here.
+  const safeOptions = Array.isArray(options) ? options : [];
+  const displayOptions = showAllOptions
+    ? safeOptions
+    : safeOptions.slice(0, showMoreLimit);
+  const hasMoreOptions = safeOptions.length > showMoreLimit;
 
   return (
     <View style={styles.container}>
