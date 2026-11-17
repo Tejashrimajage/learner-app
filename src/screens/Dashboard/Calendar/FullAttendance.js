@@ -17,11 +17,21 @@ import { useTranslation } from '../../../context/LanguageContext';
 import { useNavigation } from '@react-navigation/native';
 import MonthlyCalendar from './MonthlyCalendar';
 import { eventList, getAttendance } from '../../../utils/API/AuthService';
+import { getAttendanceHistoryRange } from '../../../utils/Helper/AttendanceHelper';
 import { convertDates } from '../../../utils/Helper/JSHelper';
+import {
+  getCohortMembershipStartDate,
+  getDataFromStorage,
+} from '../../../utils/JsHelper/Helper';
 
 import GlobalText from '@components/GlobalText/GlobalText';
 import ActiveLoading from '../../LoadingScreen/ActiveLoading';
 import NetworkAlert from '../../../components/NetworkError/NetworkAlert';
+
+// Last ~3 months. This is only how far back the calendar looks for scheduled
+// sessions, so a day with a class but no attendance mark can be shown as "not
+// marked yet". Attendance itself is read over a longer window.
+const SESSION_MARKER_DAYS = 91;
 
 const FullAttendance = () => {
   const [eventDate, setEventDate] = useState(null);
@@ -38,12 +48,14 @@ const FullAttendance = () => {
   const fetchData = async () => {
     setLoading(true);
 
+    // Attendance is read over the learner's full record (every batch they have
+    // been in), while the "session scheduled but not marked" markers stay on
+    // the shorter window they have always used.
+    const { todate, fromDate } = getAttendanceHistoryRange();
+
     const todayDate = new Date();
     const lastDate = new Date();
-    lastDate.setDate(todayDate.getDate() - 91);
-
-    const todate = todayDate.toISOString().split('T')[0];
-    const fromDate = lastDate.toISOString().split('T')[0];
+    lastDate.setDate(todayDate.getDate() - SESSION_MARKER_DAYS);
 
     const response = (await getAttendance({ todate, fromDate })) || [];
     console.log('response', response);
@@ -86,7 +98,26 @@ const FullAttendance = () => {
     const data = await eventList({ startDate, endDate });
     const eventDates = data?.events?.map((item) => item?.startDateTime) || [];
 
-    setSessionDates(Array.from(new Set(convertDates(eventDates))));
+    let dates = Array.from(new Set(convertDates(eventDates)));
+
+    // eventList is scoped to the learner's current batch. When they were moved
+    // into it mid-way, that batch's earlier sessions are not theirs to answer
+    // for, so days before they joined are dropped. When the join date isn't in
+    // the membership data, nothing is dropped.
+    let cohort = null;
+    try {
+      cohort = JSON.parse((await getDataFromStorage('cohortData')) || 'null');
+    } catch (e) {
+      cohort = null;
+    }
+    const joinDate = getCohortMembershipStartDate(cohort);
+
+    if (joinDate) {
+      const joinDateKey = convertDates([joinDate])?.[0];
+      dates = dates.filter((date) => date >= joinDateKey);
+    }
+
+    setSessionDates(dates);
   };
 
   useEffect(() => {

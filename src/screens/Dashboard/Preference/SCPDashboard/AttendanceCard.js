@@ -14,6 +14,10 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import BG from '../../../../assets/images/png/BG.png';
 import FastImage from '@changwoolab/react-native-fast-image';
 import { getAttendance } from '../../../../utils/API/AuthService';
+import {
+  calculateAttendancePercentage,
+  getAttendanceHistoryRange,
+} from '../../../../utils/Helper/AttendanceHelper';
 import { setDataInStorage } from '../../../../utils/JsHelper/Helper';
 
 import GlobalText from '@components/GlobalText/GlobalText';
@@ -24,46 +28,15 @@ const AttendanceCard = ({ attendance }) => {
 
   const [presentPercentage, setPresentPercentage] = useState('');
 
-  const calculateAttendance = (attendanceData) => {
-    const last30Days = new Date();
-    last30Days.setDate(last30Days.getDate() - 30);
-
-    // Filter data for the last 30 days
-    const filteredData = attendanceData?.filter((item) => {
-      const attendanceDate = new Date(item.attendanceDate);
-      return attendanceDate >= last30Days;
-    });
-
-    // Calculate counts for 'present' and 'absent'
-    const present = filteredData?.filter(
-      (item) => item.attendance === 'present'
-    ).length;
-    const absent = filteredData?.filter(
-      (item) => item.attendance === 'absent'
-    ).length;
-
-    // Calculate percentage of 'present' (based on the days that have attendance records)
-    const totalDaysWithData = present + absent;
-    const percentage =
-      totalDaysWithData > 0 ? (present / totalDaysWithData) * 100 : 0;
-
-    setPresentPercentage(percentage.toFixed(2)); // Round to 2 decimal places
-  };
-
   const fetchData = async () => {
-    // Get today's date
-    const todayDate = new Date();
+    const { todate, fromDate } = getAttendanceHistoryRange();
 
-    // Get date 31 days ago
-    const lastDate = new Date();
-    lastDate.setDate(todayDate.getDate() - 31);
-
-    // Format the dates as 'YYYY-MM-DD'
-    const todate = todayDate.toISOString().split('T')[0]; // 'YYYY-MM-DD'
-    const fromDate = lastDate.toISOString().split('T')[0]; // 'YYYY-MM-DD'
-
+    // The percentage covers the learner's whole record, across every batch they
+    // have been part of, so a reassignment doesn't send it back to 0%.
     const response = await getAttendance({ todate, fromDate });
-    calculateAttendance(response.attendanceList);
+    setPresentPercentage(
+      calculateAttendancePercentage(response?.attendanceList)
+    );
   };
 
   useFocusEffect(

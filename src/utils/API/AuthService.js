@@ -2,9 +2,11 @@ import axios from 'axios';
 import {
   createNewObject,
   createNewObjectTarget,
+  getAllBatchCohortIds,
   getDataFromStorage,
   getDefaultProgramTags,
   getTentantId,
+  setDataInStorage,
 } from '../JsHelper/Helper';
 import {
   deleteData,
@@ -21,6 +23,7 @@ import { Alert } from 'react-native';
 import RNHTMLtoPDF from 'react-native-html-to-pdf';
 import Share from 'react-native-share';
 import { TENANT_DATA } from '../Constants/app-constants';
+import { mergeAttendanceLists } from '../Helper/AttendanceHelper';
 
 const getHeaders = async () => {
   const token = await getDataFromStorage('Accesstoken');
@@ -2027,15 +2030,116 @@ export const SolutionEventDetails = async ({ templateId, solutionId }) => {
   }
 };
 
-export const getAttendance = async ({ todate, fromDate }) => {
-  const method = 'POST'; // Define the HTTP method
-  const url = `${EndUrls.attendance}`; // Define the URL
-  const token = await getDataFromStorage('Accesstoken');
-  let userId = await getDataFromStorage('userId');
-  let cohortId = await getDataFromStorage('cohortId');
-  const tenantid = await getTentantId();
+const PLACEHOLDER_COHORT_ID = '00000000-0000-0000-0000-000000000000';
+const ATTENDANCE_COHORT_CACHE_KEY = 'attendanceCohortIds';
+// The learner's batch history only changes when they are reassigned, so a few
+// hours of staleness is harmless and keeps the dashboard off two extra API
+// calls per screen focus. A reassignment also changes the stored cohortId,
+// which invalidates the cache immediately regardless of age.
+const ATTENDANCE_COHORT_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
-  const headers = await getHeaders();
+// Every batch the learner has been a member of in the current program, current
+// one first. Attendance rows stay attached to the batch they were marked in, so
+// this is the set of contextIds that together make up the learner's overall
+// attendance record. Falls back to the cache (then to the current batch alone)
+// when the cohort APIs can't be reached, so an offline learner never silently
+// drops their history.
+export const getLearnerBatchCohortIds = async ({
+  forceRefresh = false,
+} = {}) => {
+  const currentCohortId = await getDataFromStorage('cohortId');
+  const activeCohortId =
+    currentCohortId && currentCohortId !== PLACEHOLDER_COHORT_ID
+      ? currentCohortId
+      : null;
+
+  const withCurrentFirst = (ids) => {
+    const merged = [activeCohortId, ...(ids || [])].filter(Boolean);
+    return Array.from(new Set(merged));
+  };
+
+  let cached = null;
+  try {
+    cached = JSON.parse(
+      (await getDataFromStorage(ATTENDANCE_COHORT_CACHE_KEY)) || 'null'
+    );
+  } catch (e) {
+    cached = null;
+  }
+
+  const cacheIsUsable =
+    cached?.cohortIds?.length &&
+    cached?.currentCohortId === (activeCohortId || null);
+
+  if (
+    !forceRefresh &&
+    cacheIsUsable &&
+    Date.now() - (cached?.fetchedAt || 0) < ATTENDANCE_COHORT_CACHE_TTL_MS
+  ) {
+    return withCurrentFirst(cached.cohortIds);
+  }
+
+  try {
+    const user_id = await getDataFromStorage('userId');
+    const tenantid = await getTentantId();
+    if (!user_id || !tenantid) {
+      return withCurrentFirst(cacheIsUsable ? cached.cohortIds : []);
+    }
+
+    // A reassignment can also cross academic years, so every year the program
+    // has is walked, not just the active one.
+    const academicYears = (await getAcademicYearList({ tenantid })) || [];
+    const academicYearIds = Array.isArray(academicYears)
+      ? academicYears.map((item) => item?.id).filter(Boolean)
+      : [];
+
+    if (academicYearIds.length === 0) {
+      return withCurrentFirst(cacheIsUsable ? cached.cohortIds : []);
+    }
+
+    const cohortIds = [];
+    for (const academicYearId of academicYearIds) {
+      const cohortResult = await getCohort({
+        user_id,
+        tenantid,
+        academicYearId,
+      });
+
+      if (cohortResult?.params?.status === 'failed') continue;
+      cohortIds.push(...getAllBatchCohortIds(cohortResult));
+    }
+
+    const resolved = withCurrentFirst(cohortIds);
+
+    if (resolved.length > 0) {
+      await setDataInStorage(
+        ATTENDANCE_COHORT_CACHE_KEY,
+        JSON.stringify({
+          currentCohortId: activeCohortId || null,
+          cohortIds: resolved,
+          fetchedAt: Date.now(),
+        })
+      );
+    }
+
+    return resolved;
+  } catch (e) {
+    console.log('getLearnerBatchCohortIds failed', e);
+    return withCurrentFirst(cacheIsUsable ? cached.cohortIds : []);
+  }
+};
+
+// One attendance/list call for a single batch. Keeps the per-payload offline
+// cache the screen relied on before, so each batch's rows survive going offline
+// independently of the others.
+const getAttendanceForCohort = async ({
+  cohortId,
+  userId,
+  todate,
+  fromDate,
+  headers,
+}) => {
+  const url = `${EndUrls.attendance}`;
 
   const payload = {
     limit: 300,
@@ -2051,17 +2155,6 @@ export const getAttendance = async ({ todate, fromDate }) => {
   };
 
   try {
-    // const curlCommand = `
-    // curl -X POST '${url}' \\
-    // -H 'Content-Type: application/json' \\
-    // -H 'Accept: application/json' \\
-    // -H 'Authorization:  ${headers.Authorization}' \\
-    // -H 'tenantId: ${headers.tenantId}' \\
-    // -d '${JSON.stringify(payload)}'
-    //     `;
-    // console.log('cURL Command:', curlCommand);
-
-    // Make the actual request
     const result = await post(url, payload, {
       headers: headers || {},
     });
@@ -2069,14 +2162,57 @@ export const getAttendance = async ({ todate, fromDate }) => {
     if (result) {
       await storeApiResponse(userId, url, 'post', payload, result?.data?.data);
       return result?.data?.data;
-    } else {
-      let result_offline = await getApiResponse(userId, url, 'post', payload);
-      return result_offline;
     }
+
+    return await getApiResponse(userId, url, 'post', payload);
   } catch (e) {
-    let result_offline = await getApiResponse(userId, url, 'post', payload);
-    return result_offline;
+    return await getApiResponse(userId, url, 'post', payload);
   }
+};
+
+export const getAttendance = async ({ todate, fromDate, cohortIds }) => {
+  const userId = await getDataFromStorage('userId');
+  const headers = await getHeaders();
+
+  // Attendance is stored against the batch it was marked in. Asking only for
+  // the learner's current batch is what made a reassigned learner read as 0% -
+  // every batch they have belonged to is asked for instead.
+  const batchIds = cohortIds?.length
+    ? cohortIds
+    : await getLearnerBatchCohortIds();
+
+  const idsToQuery = (batchIds || []).filter(
+    (id) => id && id !== PLACEHOLDER_COHORT_ID
+  );
+
+  // The learner isn't in any batch yet - an empty record, not a failed read.
+  if (idsToQuery.length === 0) {
+    return { attendanceList: [], totalCount: 0 };
+  }
+
+  const responses = await Promise.all(
+    idsToQuery.map((cohortId) =>
+      getAttendanceForCohort({ cohortId, userId, todate, fromDate, headers })
+    )
+  );
+
+  // Nothing came back from any batch, online or from the offline cache. Return
+  // nothing rather than an empty record, so screens can still tell "couldn't
+  // read" apart from "no attendance marked" and raise the network alert.
+  const usableResponses = responses.filter(Boolean);
+  if (usableResponses.length === 0) return undefined;
+
+  const attendanceList = mergeAttendanceLists(
+    usableResponses.map((response) => response?.attendanceList)
+  );
+
+  // Shape is kept identical to the single-batch response the screens already
+  // read, with the current batch's response supplying any other fields.
+  return {
+    ...(usableResponses[0] || {}),
+    attendanceList,
+    totalCount: attendanceList.length,
+  };
 };
 export const LearningMaterialAPI = async () => {
   const user_id = await getDataFromStorage('userId'); // Ensure this is defined

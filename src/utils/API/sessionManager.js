@@ -31,6 +31,7 @@ const SESSION_KEYS = [
   'userId',
   'cohortId',
   'cohortData',
+  'attendanceCohortIds',
   'weightedProgress',
   'courseTrackData',
   'profileData',

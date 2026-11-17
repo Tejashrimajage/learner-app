@@ -131,6 +131,7 @@ const LanguageScreen = () => {
       await deleteSavedItem('userId');
       await deleteSavedItem('cohortId');
       await deleteSavedItem('cohortData');
+      await deleteSavedItem('attendanceCohortIds');
       await deleteSavedItem('weightedProgress');
       await deleteSavedItem('courseTrackData');
       await deleteSavedItem('profileData');

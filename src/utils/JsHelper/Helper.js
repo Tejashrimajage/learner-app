@@ -1159,6 +1159,47 @@ export const getActiveCohortData = async (cohortData) => {
     ?.map((cohort) => cohort);
 };
 
+// Every batch the learner has EVER been a member of in a mycohorts response -
+// active, archived or dropped out alike. Attendance is marked against the batch
+// (cohort) that was current on the day of the session, so a learner reassigned
+// from batch A to batch B keeps attendance rows on A. Those rows are only
+// reachable by asking for A's contextId as well, which is why the inactive
+// memberships are deliberately kept here (getActiveCohortIds drops them).
+export const getAllBatchCohortIds = (cohortData) => {
+  if (!Array.isArray(cohortData)) return [];
+
+  return cohortData
+    ?.filter((cohort) => {
+      if (!cohort?.cohortId) return false;
+      // `type` is absent on some responses - only filter when it is present,
+      // so a response without it is still usable.
+      return cohort?.type ? cohort?.type === 'BATCH' : true;
+    })
+    ?.map((cohort) => cohort?.cohortId);
+};
+
+// Date the learner joined a batch, read from a mycohorts membership object.
+// The API has used a few names for it across versions, so the known candidates
+// are tried in order and the first valid date wins. Returns null when none is
+// present - callers must treat that as "join date unknown" and not clip.
+export const getCohortMembershipStartDate = (cohort) => {
+  const candidates = [
+    cohort?.cohortMembershipCreatedAt,
+    cohort?.cohortMemberCreatedAt,
+    cohort?.memberCreatedAt,
+    cohort?.cohortMembership?.createdAt,
+    cohort?.createdAt,
+  ];
+
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const parsed = new Date(candidate);
+    if (!isNaN(parsed.getTime())) return parsed;
+  }
+
+  return null;
+};
+
 // utils.js
 export const getAssociationsByName = (data, name) => {
   const foundItem = data.find((item) => item.name === name);
