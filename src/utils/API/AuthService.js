@@ -2027,17 +2027,58 @@ export const SolutionEventDetails = async ({ templateId, solutionId }) => {
   }
 };
 
+// Placeholder written to storage when the learner has no active cohort.
+const EMPTY_COHORT_ID = '00000000-0000-0000-0000-000000000000';
+
+// Attendance records are stored per cohort, so querying only the learner's
+// current batch wipes the attendance % whenever they are reassigned. Collect
+// every cohort the learner is (or was) a member of WITHIN THE ACTIVE ACADEMIC
+// YEAR, so attendance carries across reassignments inside that year while
+// still resetting at the start of a new academic year.
+const getAttendanceCohortIds = async () => {
+  const ids = [];
+
+  try {
+    const user_id = await getDataFromStorage('userId');
+    const tenantData = JSON.parse(
+      (await getDataFromStorage('tenantData')) || '[]'
+    );
+    const tenantid = tenantData?.[0]?.tenantId;
+    // Active academic year only - mycohorts is scoped by this header, so
+    // cohorts from earlier academic years are never returned.
+    const academicYearId = await getDataFromStorage('academicYearId');
+
+    if (user_id && tenantid && academicYearId) {
+      const cohort = await getCohort({ user_id, tenantid, academicYearId });
+      if (Array.isArray(cohort)) {
+        // No cohortMemberStatus filter on purpose: the batches the learner has
+        // been moved out of (archived / reassigned) are exactly the ones
+        // holding the earlier records.
+        cohort.forEach((item) => {
+          if (item?.cohortId) ids.push(item.cohortId);
+        });
+      }
+    }
+  } catch (e) {
+    // Fall through to the stored cohortId below.
+  }
+
+  // Current batch first, and the only id used if mycohorts is unavailable.
+  const currentCohortId = await getDataFromStorage('cohortId');
+  if (currentCohortId) ids.unshift(currentCohortId);
+
+  return [...new Set(ids)].filter((id) => id && id !== EMPTY_COHORT_ID);
+};
+
 export const getAttendance = async ({ todate, fromDate }) => {
-  const method = 'POST'; // Define the HTTP method
   const url = `${EndUrls.attendance}`; // Define the URL
-  const token = await getDataFromStorage('Accesstoken');
   let userId = await getDataFromStorage('userId');
-  let cohortId = await getDataFromStorage('cohortId');
-  const tenantid = await getTentantId();
 
   const headers = await getHeaders();
 
-  const payload = {
+  const cohortIds = await getAttendanceCohortIds();
+
+  const buildPayload = (cohortId) => ({
     limit: 300,
     page: 0,
     filters: {
@@ -2048,35 +2089,51 @@ export const getAttendance = async ({ todate, fromDate }) => {
       fromDate: fromDate,
       userId: userId,
     },
+  });
+
+  // Nothing to query - keep the previous shape so callers reading
+  // response.attendanceList still work.
+  if (!cohortIds.length) {
+    return { attendanceList: [] };
+  }
+
+  const fetchForCohort = async (cohortId) => {
+    const payload = buildPayload(cohortId);
+    try {
+      const result = await post(url, payload, {
+        headers: headers || {},
+      });
+
+      if (result) {
+        await storeApiResponse(userId, url, 'post', payload, result?.data?.data);
+        return result?.data?.data;
+      }
+      return await getApiResponse(userId, url, 'post', payload);
+    } catch (e) {
+      return await getApiResponse(userId, url, 'post', payload);
+    }
   };
 
-  try {
-    // const curlCommand = `
-    // curl -X POST '${url}' \\
-    // -H 'Content-Type: application/json' \\
-    // -H 'Accept: application/json' \\
-    // -H 'Authorization:  ${headers.Authorization}' \\
-    // -H 'tenantId: ${headers.tenantId}' \\
-    // -d '${JSON.stringify(payload)}'
-    //     `;
-    // console.log('cURL Command:', curlCommand);
+  // contextId takes a single cohort, so one request per cohort, merged below.
+  const responses = await Promise.all(cohortIds.map(fetchForCohort));
 
-    // Make the actual request
-    const result = await post(url, payload, {
-      headers: headers || {},
+  const seen = new Set();
+  const attendanceList = [];
+  responses.forEach((response) => {
+    (response?.attendanceList || []).forEach((item) => {
+      // A learner can only be marked once per cohort per day; the key guards
+      // against the same record arriving twice (e.g. duplicate cohort ids).
+      const key =
+        item?.attendanceId ??
+        `${item?.contextId ?? ''}|${item?.attendanceDate ?? ''}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      attendanceList.push(item);
     });
+  });
 
-    if (result) {
-      await storeApiResponse(userId, url, 'post', payload, result?.data?.data);
-      return result?.data?.data;
-    } else {
-      let result_offline = await getApiResponse(userId, url, 'post', payload);
-      return result_offline;
-    }
-  } catch (e) {
-    let result_offline = await getApiResponse(userId, url, 'post', payload);
-    return result_offline;
-  }
+  // Preserve the rest of the response shape from the current batch's call.
+  return { ...(responses[0] || {}), attendanceList };
 };
 export const LearningMaterialAPI = async () => {
   const user_id = await getDataFromStorage('userId'); // Ensure this is defined
