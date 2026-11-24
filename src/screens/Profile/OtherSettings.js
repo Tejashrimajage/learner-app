@@ -260,7 +260,42 @@ const OtherSettings = ({ route }) => {
               </View>
             </TouchableOpacity>
           )}
-{/* 
+
+          <TouchableOpacity
+            style={[globalStyles.flexrow, styles.borderColor]}
+            onPress={() => {
+              // Support Request is served by the learner web app in a WebView, same as
+              // Edit Profile. If the web URL is not configured for this build, fall back
+              // to the older JotForm support form rather than dead-ending.
+              if (Config.LEARNER_PLP_LINK) {
+                navigation.navigate('SupportRequestWebViewScreen');
+              } else {
+                navigation.navigate('SupportRequest');
+              }
+            }}
+          >
+            <View
+              style={[
+                globalStyles.flexrow,
+                { justifyContent: 'space-between', width: '100%' },
+              ]}
+            >
+              <GlobalText
+                style={[globalStyles.h6, { color: '#4D4639' }]}
+                numberOfLines={2}
+                ellipsizeMode="tail"
+              >
+                {t('support_request')}
+              </GlobalText>
+              <Icon
+                name="angle-right"
+                style={{ marginHorizontal: 10 }}
+                color={'#000'}
+                size={30}
+              />
+            </View>
+          </TouchableOpacity>
+{/*
           <TouchableOpacity
             style={[globalStyles.flexrow, styles.borderColor]}
             onPress={() => {

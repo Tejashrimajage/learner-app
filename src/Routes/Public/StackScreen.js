@@ -35,6 +35,7 @@ import UnauthorizedScreen from '../../screens/Unauthorized/UnauthorizedScreen';
 import PlpWebViewScreen from '../../screens/PlpWebViewScreen/PlpWebViewScreen';
 import ProgramsScreen from '../../screens/ProgramsScreen/ProgramsScreen';
 import ProfileWebViewScreen from '../../screens/ProfileWebViewScreen/ProfileWebViewScreen';
+import SupportRequestWebViewScreen from '../../screens/SupportRequestWebViewScreen/SupportRequestWebViewScreen';
 
 const StackScreen = () => {
   const Stack = createNativeStackNavigator();
@@ -289,6 +290,16 @@ const StackScreen = () => {
       <Stack.Screen
         name="ProfileWebViewScreen"
         component={ProfileWebViewScreen}
+        options={{ headerShown: false, lazy: true }}
+      />
+      {/* Registered on the root stack alongside ProfileWebViewScreen so it can be reached
+          from the profile menu (nested in ProfileStack) and from anywhere else that needs
+          to link to the support desk. Presented full screen, like the other WebView
+          screens. Named ...WebViewScreen because ProfileStack already has a 'SupportRequest'
+          route for the legacy JotForm screen. */}
+      <Stack.Screen
+        name="SupportRequestWebViewScreen"
+        component={SupportRequestWebViewScreen}
         options={{ headerShown: false, lazy: true }}
       />
     </Stack.Navigator>
